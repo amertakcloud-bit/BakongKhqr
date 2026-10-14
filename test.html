@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="km">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ទូទាត់តាម KHQR</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Khmer:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --ink:#1b1f27; --muted:#6b7280; --brand:#e21b23; --ok:#12a150; --warn:#c77700; --line:#e5e7eb; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#0f1115; --card:#181b22; --ink:#f1f3f6; --muted:#9aa3b2; --line:#2a2f3a; } }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; padding:16px; background:var(--bg); color:var(--ink);
+         font-family:"Noto Sans Khmer","Khmer OS",system-ui,sans-serif; line-height:1.7; }
+  .card { width:100%; max-width:380px; background:var(--card); border:1px solid var(--line); border-radius:20px; padding:24px; text-align:center; }
+  h1 { font-size:1.25rem; margin:0 0 4px; } p { margin:0; color:var(--muted); font-size:.9rem; }
+  label { display:block; text-align:left; margin:20px 0 6px; font-weight:600; font-size:.9rem; }
+  input { width:100%; padding:14px; font:inherit; font-size:1.25rem; border:1px solid var(--line); border-radius:12px; background:transparent; color:inherit; }
+  input:focus { outline:2px solid var(--brand); border-color:transparent; }
+  button, .btn { display:block; width:100%; margin-top:14px; padding:14px; font:inherit; font-weight:700; border:0; border-radius:12px;
+                 background:var(--brand); color:#fff; cursor:pointer; text-decoration:none; }
+  button:disabled { opacity:.6; cursor:wait; }
+  .btn.ghost { background:transparent; color:var(--brand); border:1.5px solid var(--brand); }
+  .err { margin-top:12px; color:var(--brand); font-size:.9rem; min-height:1.2em; }
+
+  dialog#qrDialog { width:100%; max-width:340px; border:0; border-radius:20px; padding:24px; background: #131313; color:var(--muted); }
+  dialog#qrDialog::backdrop { background:rgba(0,0,0,.5); }
+  .qr-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .close { background:transparent; color:var(--muted); border:0; width:auto; margin:0; padding:4px 8px; font-size:1.3rem; line-height:1; cursor:pointer; }
+  .amt { font-size:1.6rem; font-weight:700; margin:4px 0 12px; }
+  .qr { width:100%; max-width:260px; aspect-ratio:1; margin:0 auto 8px; border-radius:12px; background: transparent; display:block; object-fit:contain; }
+  .timer { font-variant-numeric:tabular-nums; font-weight:700; color:var(--warn); }
+  .status { margin-top:10px; padding:10px 12px; border-radius:10px; background:var(--bg); font-size:.9rem; }
+  .status[data-s="scanned"] { color:var(--warn); } .status[data-s="paid"] { color:var(--ok); }
+  .big { font-size:3rem; margin:8px 0; }
+</style>
+</head>
+<body>
+<main class="card">
+  <h1>ទូទាត់តាម KHQR</h1>
+  <p>បញ្ចូលចំនួនទឹកប្រាក់ ដើម្បីបង្កើត QR</p>
+  <label for="amount">ចំនួនទឹកប្រាក់</label>
+  <input id="amount" type="number" inputmode="decimal" min="0.01" step="0.01" value="1.00" autocomplete="off">
+  <button id="create">បង្កើត QR</button>
+  <div class="err" id="err" role="alert"></div>
+</main>
+
+<dialog id="qrDialog">
+  <div id="payView">
+    <div class="qr-head">
+      <span></span>
+      <button class="close" id="closeDialog" aria-label="បិទ">✕</button>
+    </div>
+    <div class="amt" id="amtLabel"></div>
+    <img id="qrImg" class="qr" alt="KHQR" hidden>
+    <p id="qrFallback" hidden>មិនអាចបង្ហាញរូប QR បានទេ សូមប្រើប៊ូតុងខាងក្រោម</p>
+    <p>ផុតកំណត់ក្នុង <span class="timer" id="timer">10:00</span></p>
+    <div class="status" id="status" data-s="unpaid" aria-live="polite"></div>
+    <a id="deeplink" class="btn" href="#" target="_blank" rel="noopener" hidden>បើកក្នុងកម្មវិធីធនាគារ</a>
+  </div>
+  <div id="doneView" hidden>
+    <div class="big" id="doneIcon"></div>
+    <h1 id="doneTitle"></h1>
+    <p id="doneMsg"></p>
+    <button id="again">ចាប់ផ្តើមម្តងទៀត</button>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  const API_BASE = 'https://amertak-bakong.onrender.com';
+  const $ = (id) => document.getElementById(id);
+  const TEXT = {
+    unpaid: 'កំពុងរង់ចាំការស្កេន…',
+    scanned: 'បានស្កេនហើយ! សូមបញ្ជាក់ការទូទាត់ក្នុងកម្មវិធីធនាគារ',
+    paid: 'ទូទាត់ជោគជ័យ',
+    expired: 'QR ផុតកំណត់',
+  };
+  const ERRORS = {
+    invalid_request: 'ចំនួនទឹកប្រាក់មិនត្រឹមត្រូវ',
+    too_many_requests: 'សំណើច្រើនពេក សូមរង់ចាំបន្តិចហើយសាកម្តងទៀត',
+    payment_provider_timeout: 'ប្រព័ន្ធទូទាត់ឆ្លើយតបយឺត សូមសាកម្តងទៀត',
+    payment_provider_maintenance: 'ប្រព័ន្ធទូទាត់កំពុងថែទាំ សូមសាកម្តងទៀតពេលក្រោយ',
+  };
+
+  const dialog = $('qrDialog');
+  let current = null, remaining = 600, pollTimer = null, tickTimer = null;
+
+  const fmt = (s) => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+  const setStatus = (s) => { $('status').textContent = TEXT[s] || s; $('status').dataset.s = s; };
+  const stop = () => { clearTimeout(pollTimer); clearInterval(tickTimer); };
+
+  function showPayView() { $('payView').hidden = false; $('doneView').hidden = true; }
+  function showDoneView() { $('payView').hidden = true; $('doneView').hidden = false; }
+
+  async function api(path, opts) {
+    const res = await fetch(API_BASE + path, opts);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const e = new Error(body.error || 'request_failed');
+      e.status = res.status;
+      e.retryAfter = Number(res.headers.get('Retry-After')) || 0;
+      throw e;
+    }
+    return body;
+  }
+
+  function finish(paid) {
+    stop();
+    $('doneIcon').textContent = paid ? '✅' : '⏰';
+    $('doneTitle').textContent = paid ? TEXT.paid : TEXT.expired;
+    $('doneMsg').textContent = paid ? 'អរគុណ! ការបញ្ជាទិញរបស់អ្នកត្រូវបានបញ្ជាក់។' : 'សូមបង្កើត QR ថ្មី ដើម្បីបន្តការទូទាត់។';
+    showDoneView();
+  }
+
+  async function poll() {
+    try {
+      const s = await api(`/api/payments/${current.md5}/status`);
+      remaining = s.remainingSeconds;
+      setStatus(s.status);
+      if (s.status === 'paid') return finish(true);
+      if (s.status === 'expired') return finish(false);
+      pollTimer = setTimeout(poll, current.pollIntervalMs || 4000);
+    } catch (e) {
+      if (e.status === 404) return finish(false);
+      pollTimer = setTimeout(poll, Math.max(e.retryAfter * 1000, 6000));
+    }
+  }
+
+  async function createPayment() {
+    const amount = parseFloat($('amount').value);
+    $('err').textContent = '';
+    if (!(amount >= 0.01)) { $('err').textContent = 'សូមបញ្ចូលចំនួនទឹកប្រាក់ចាប់ពី 0.01'; return; }
+
+    const btn = $('create');
+    btn.disabled = true;
+    btn.textContent = 'កំពុងបង្កើត…';
+    try {
+      // ក្នុងហាងពិត server គួរកំណត់ amount/orderId ពីកន្ត្រកទំនិញ មិនមែនពី browser ទេ
+      current = await api('/api/payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ orderId: `ORD-${Date.now()}`, amount }),
+      });
+
+      $('amtLabel').textContent = amount.toFixed(2);
+      const img = $('qrImg');
+      const ok = typeof current.image === 'string' && current.image.startsWith('data:image/');
+      img.hidden = !ok;
+      $('qrFallback').hidden = ok;
+      if (ok) img.src = current.image;
+
+      const dl = $('deeplink');
+      const hasLink = typeof current.deeplink === 'string' && current.deeplink.startsWith('https://');
+      dl.hidden = !hasLink;
+      if (hasLink) dl.href = current.deeplink;
+
+      remaining = 600;
+      $('timer').textContent = fmt(remaining);
+      setStatus('unpaid');
+      showPayView();
+      dialog.showModal();
+
+      tickTimer = setInterval(() => {
+        remaining = Math.max(0, remaining - 1);
+        $('timer').textContent = fmt(remaining);
+        if (remaining === 0) finish(false);
+      }, 1000);
+      pollTimer = setTimeout(poll, current.pollIntervalMs || 4000);
+    } catch (e) {
+      $('err').textContent = ERRORS[e.message] || 'មានបញ្ហា សូមសាកម្តងទៀត';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'បង្កើត QR';
+    }
+  }
+
+  $('create').addEventListener('click', createPayment);
+  $('amount').addEventListener('keydown', (e) => { if (e.key === 'Enter') createPayment(); });
+  $('closeDialog').addEventListener('click', () => dialog.close());
+  $('again').addEventListener('click', () => { stop(); current = null; dialog.close(); });
+  dialog.addEventListener('close', () => stop());
+})();
+</script>
+</body>
+</html>

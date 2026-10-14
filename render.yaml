@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: bakong-khqr
+    runtime: node
+    plan: free # ប្តូរទៅ starter ឡើងទៅ សម្រាប់ production (មើល DEPLOY.md)
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 20
+      - key: RBK_TOKEN
+        sync: false # បំពេញក្នុង Render Dashboard
+      - key: RBK_WEBHOOK_SECRET
+        sync: false
